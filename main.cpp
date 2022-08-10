@@ -1,11 +1,15 @@
 #include <enet/enet.h>
-
+#include <string>
 #include <iostream>
+#include <thread>
+
 using namespace std;
 
 ENetAddress address;
 ENetHost* server = nullptr;
 ENetHost* client = nullptr;
+string ServerUserName;
+string ClientUserName;
 
 bool CreateServer()
 {
@@ -35,6 +39,36 @@ bool CreateClient()
     return client != nullptr;
 }
 
+void ServerSendMessage()
+{
+    while (true) {
+        string msg;
+        cin >> msg;
+        string msg_to_send = ServerUserName + ":" + msg;
+
+        ENetPacket* packet = enet_packet_create(msg_to_send.c_str(),
+            strlen(msg_to_send.c_str()) + 1,
+            ENET_PACKET_FLAG_RELIABLE);
+        enet_host_broadcast(server, 0, packet);
+        enet_host_flush(server);
+    }
+}
+
+void ClientSendMessage()
+{
+    while (true) {
+        string msg;
+        cin >> msg;
+        string msg_to_send = ClientUserName + ":" + msg;
+
+        ENetPacket* packet = enet_packet_create(msg_to_send.c_str(),
+            strlen(msg_to_send.c_str()) + 1,
+            ENET_PACKET_FLAG_RELIABLE);
+        enet_host_broadcast(client, 0, packet);
+        enet_host_flush(client);
+    }
+}
+
 int main(int argc, char** argv)
 {
     if (enet_initialize() != 0)
@@ -44,8 +78,6 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
     atexit(enet_deinitialize);
-
-
 
     cout << "1) Create Server " << endl;
     cout << "2) Create Client " << endl;
@@ -59,6 +91,11 @@ int main(int argc, char** argv)
                 "An error occurred while trying to create an ENet server host.\n");
             exit(EXIT_FAILURE);
         }
+
+        cout << "Please enter your name" << endl;
+        cin >> ServerUserName;
+        
+        thread ServerSendingThread(ServerSendMessage);
 
         while (1)
         {
@@ -96,9 +133,7 @@ int main(int argc, char** argv)
                     }
                     break;
                 case ENET_EVENT_TYPE_RECEIVE:
-                    cout << "A packet of length "
-                        << event.packet->dataLength << endl
-                        << "containing " << (char*)event.packet->data
+                    cout << (char*)event.packet->data
                         << endl;
                     //<< "was received from " << (char*)event.peer->data
                     //<< " on channel " << event.channelID << endl;
@@ -115,6 +150,7 @@ int main(int argc, char** argv)
             }
         }
 
+        ServerSendingThread.join();
     }
     else if (UserInput == 2)
     {
@@ -124,6 +160,11 @@ int main(int argc, char** argv)
                 "An error occurred while trying to create an ENet client host.\n");
             exit(EXIT_FAILURE);
         }
+
+        cout << "Please enter your name" << endl;
+        cin >> ClientUserName;
+
+        thread ClientSendingThread(ClientSendMessage);
 
         ENetAddress address;
         ENetEvent event;
@@ -163,9 +204,7 @@ int main(int argc, char** argv)
                 switch (event.type)
                 {
                 case ENET_EVENT_TYPE_RECEIVE:
-                    cout << "A packet of length "
-                        << event.packet->dataLength << endl
-                        << "containing " << (char*)event.packet->data
+                    cout << (char*)event.packet->data
                         << endl;
                     /* Clean up the packet now that we're done using it. */
                     enet_packet_destroy(event.packet);
