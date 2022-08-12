@@ -2,6 +2,7 @@
 #include <string>
 #include <iostream>
 #include <thread>
+#include <stdlib.h>
 
 using namespace std;
 
@@ -9,13 +10,27 @@ ENetHost* NetHost = nullptr;
 ENetPeer* Peer = nullptr;
 bool IsServer = false;
 thread* PacketThread = nullptr;
+constexpr int NUMBER_OF_PLAYERS = 2;
+int CurrentNumPlayers = 0;
+int RandomNumber = rand() % 10; // 0-9
+//int RandomNumber = 1; // 0-9
 
 enum PacketHeaderTypes
 {
     PHT_Invalid = 0,
     PHT_IsDead,
     PHT_Position,
-    PHT_Count
+    PHT_Guess,
+    PHT_Count,
+    PHT_Start
+};
+
+class PlayerInfo
+{
+    int connectionId = 0;
+    string name = {};
+    int numGuesses = 0;
+
 };
 
 struct GamePacket
@@ -34,6 +49,27 @@ struct IsDeadPacket : public GamePacket
     int playerId = 0;
     bool IsDead = false;
 };
+
+
+class NumGuessPacket : public GamePacket
+{
+public:
+    NumGuessPacket()
+    {
+        Type = PHT_Guess;
+    }
+    int Guess;
+};
+
+class GameStartPacket : public GamePacket
+{
+public:
+    GameStartPacket()
+    {
+        Type = PHT_Start;
+    }
+};
+
 
 struct PositionPacket : public GamePacket
 {
@@ -84,7 +120,25 @@ bool AttemptConnectToServer()
     return Peer != nullptr;
 }
 
-void HandleReceivePacket(const ENetEvent& event)
+void SentGuessNumberPacket(int GuessNumber, const ENetEvent& event)
+{
+    auto GuessNumberPacket = make_unique<NumGuessPacket>(); //client sent guessNumber to server 
+    GuessNumberPacket->Guess = GuessNumber;
+
+    ENetPacket* packet = enet_packet_create(GuessNumberPacket.get(),
+        sizeof(GuessNumberPacket.get()),
+        ENET_PACKET_FLAG_RELIABLE);
+    /* One could also broadcast the packet by         */
+    //enet_host_broadcast(NetHost, 0, packet);
+    enet_peer_send(event.peer, 0, packet);
+
+    /* One could just use enet_host_service() instead. */
+    //enet_host_service();
+    //enet_host_flush(NetHost);
+}
+
+
+void HandleReceivePacket(const ENetEvent& event) //Both client and server recieve packet logic
 {
     GamePacket* RecGamePacket = (GamePacket*)(event.packet->data);
     if (RecGamePacket)
@@ -101,6 +155,37 @@ void HandleReceivePacket(const ENetEvent& event)
                 cout << response << endl;
             }
         }
+        else if (RecGamePacket->Type == PHT_Start)
+        {
+            cout << "Please guess a Number!" << endl;
+            int Number;
+            cin >> Number;
+            SentGuessNumberPacket(Number, event);
+        }
+        else if (RecGamePacket->Type == PHT_Guess)
+        {
+            NumGuessPacket* IsSameNumberPacket = (NumGuessPacket*)(event.packet->data);
+            if (IsSameNumberPacket->Guess == RandomNumber)
+            {
+                string msg = "You Won !";
+                ENetPacket* packet = enet_packet_create(msg.c_str(),
+                    strlen(msg.c_str()) + 1,
+                    ENET_PACKET_FLAG_RELIABLE);
+                /* One could also broadcast the packet by         */
+                //enet_host_broadcast(NetHost, 0, packet);
+                enet_peer_send(event.peer, 0, packet);
+            }
+            else
+            {
+                string msg = "Try Again !";
+                ENetPacket* packet = enet_packet_create(msg.c_str(),
+                    strlen(msg.c_str()) + 1,
+                    ENET_PACKET_FLAG_RELIABLE);
+                /* One could also broadcast the packet by         */
+                //enet_host_broadcast(NetHost, 0, packet);
+                enet_peer_send(event.peer, 0, packet);
+            }
+        }
     }
     else
     {
@@ -112,6 +197,21 @@ void HandleReceivePacket(const ENetEvent& event)
     {
         enet_host_flush(NetHost);
     }
+}
+
+void BroadcastGameStartPacket()
+{
+    auto IsGameStartPacket = make_unique<GameStartPacket>();
+    ENetPacket* packet = enet_packet_create(IsGameStartPacket.get(),
+        sizeof(IsGameStartPacket.get()),
+        ENET_PACKET_FLAG_RELIABLE);
+    /* One could also broadcast the packet by         */
+    enet_host_broadcast(NetHost, 0, packet);
+    //enet_peer_send(event.peer, 0, packet);
+
+    /* One could just use enet_host_service() instead. */
+    //enet_host_service();
+    enet_host_flush(NetHost);
 }
 
 void BroadcastIsDeadPacket()
@@ -149,6 +249,31 @@ void ServerProcessPackets()
                 /* Store any relevant client information here. */
                 event.peer->data = (void*)("Client information");
                 BroadcastIsDeadPacket();
+
+                CurrentNumPlayers++;
+                if (CurrentNumPlayers == NUMBER_OF_PLAYERS) 
+                {
+                    string msg = "We have enough players, let's start the game !";
+
+                    ENetPacket* packet = enet_packet_create(msg.c_str(),
+                        strlen(msg.c_str()) + 1,
+                        ENET_PACKET_FLAG_RELIABLE);
+                    enet_host_broadcast(NetHost, 0, packet);
+                    enet_host_flush(NetHost);
+
+                    BroadcastGameStartPacket();
+                }
+                else
+                {
+                    string msg = "hold tight! waiting for other player to join.";
+
+                    ENetPacket* packet = enet_packet_create(msg.c_str(),
+                        strlen(msg.c_str()) + 1,
+                        ENET_PACKET_FLAG_RELIABLE);
+                    enet_peer_send(event.peer, 0, packet);
+                    enet_host_flush(NetHost);
+                }
+
                 break;
             case ENET_EVENT_TYPE_RECEIVE:
                 HandleReceivePacket(event);
@@ -170,7 +295,7 @@ void ClientProcessPackets()
     {
         ENetEvent event;
         /* Wait up to 1000 milliseconds for an event. */
-        while (enet_host_service(NetHost, &event, 1000) > 0)
+        while (enet_host_service(NetHost, &event, 10000) > 0)
         {
             switch (event.type)
             {
@@ -178,6 +303,7 @@ void ClientProcessPackets()
                 cout << "Connection succeeded " << endl;
                 break;
             case ENET_EVENT_TYPE_RECEIVE:
+                cout << (char*)event.packet->data << endl;
                 HandleReceivePacket(event);
                 break;
             }
@@ -256,4 +382,14 @@ int main(int argc, char** argv)
     }
 
     return EXIT_SUCCESS;
+}
+
+void Draw()
+{
+
+}
+
+void Test()
+{
+
 }
