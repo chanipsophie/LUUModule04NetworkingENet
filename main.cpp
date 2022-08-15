@@ -22,7 +22,9 @@ enum PacketHeaderTypes
     PHT_Position,
     PHT_Guess,
     PHT_Count,
-    PHT_Start
+    PHT_Start,
+    PHT_YouWon,
+    PHT_TryAgain
 };
 
 class PlayerInfo
@@ -48,6 +50,22 @@ struct IsDeadPacket : public GamePacket
 
     int playerId = 0;
     bool IsDead = false;
+};
+
+struct HasWonPacket : public GamePacket
+{
+    HasWonPacket()
+    {
+        Type = PHT_YouWon;
+    }
+};
+
+struct TryAgainPacket : public GamePacket
+{
+    TryAgainPacket()
+    {
+        Type = PHT_TryAgain;
+    }
 };
 
 
@@ -137,6 +155,37 @@ void SentGuessNumberPacket(int GuessNumber, const ENetEvent& event)
     //enet_host_flush(NetHost);
 }
 
+void SentYouWonPacket(const ENetEvent& event)
+{
+    auto YouWonPacket = make_unique<HasWonPacket>(); //client sent guessNumber to server 
+   
+    ENetPacket* packet = enet_packet_create(YouWonPacket.get(),
+        sizeof(YouWonPacket.get()),
+        ENET_PACKET_FLAG_RELIABLE);
+    /* One could also broadcast the packet by         */
+    //enet_host_broadcast(NetHost, 0, packet);
+    enet_peer_send(event.peer, 0, packet);
+
+    /* One could just use enet_host_service() instead. */
+    //enet_host_service();
+    //enet_host_flush(NetHost);
+}
+
+void SentTryAgainPacket(const ENetEvent& event)
+{
+    auto YouTryAgainPacket = make_unique<TryAgainPacket>(); //client sent guessNumber to server 
+
+    ENetPacket* packet = enet_packet_create(YouTryAgainPacket.get(),
+        sizeof(YouTryAgainPacket.get()),
+        ENET_PACKET_FLAG_RELIABLE);
+    /* One could also broadcast the packet by         */
+    //enet_host_broadcast(NetHost, 0, packet);
+    enet_peer_send(event.peer, 0, packet);
+
+    /* One could just use enet_host_service() instead. */
+    //enet_host_service();
+    //enet_host_flush(NetHost);
+}
 
 void HandleReceivePacket(const ENetEvent& event) //Both client and server recieve packet logic
 {
@@ -167,24 +216,25 @@ void HandleReceivePacket(const ENetEvent& event) //Both client and server reciev
             NumGuessPacket* IsSameNumberPacket = (NumGuessPacket*)(event.packet->data);
             if (IsSameNumberPacket->Guess == RandomNumber)
             {
-                string msg = "You Won !";
-                ENetPacket* packet = enet_packet_create(msg.c_str(),
-                    strlen(msg.c_str()) + 1,
-                    ENET_PACKET_FLAG_RELIABLE);
-                /* One could also broadcast the packet by         */
-                //enet_host_broadcast(NetHost, 0, packet);
-                enet_peer_send(event.peer, 0, packet);
+                SentYouWonPacket(event);
             }
             else
             {
-                string msg = "Try Again !";
-                ENetPacket* packet = enet_packet_create(msg.c_str(),
-                    strlen(msg.c_str()) + 1,
-                    ENET_PACKET_FLAG_RELIABLE);
-                /* One could also broadcast the packet by         */
-                //enet_host_broadcast(NetHost, 0, packet);
-                enet_peer_send(event.peer, 0, packet);
+                SentTryAgainPacket(event);
             }
+        }
+        else if (RecGamePacket->Type == PHT_TryAgain)
+        {
+            cout << "Try Again!" << endl;
+
+            cout << "Please guess a Number!" << endl;
+            int Number;
+            cin >> Number;
+            SentGuessNumberPacket(Number, event);
+        }
+        else if (RecGamePacket->Type == PHT_YouWon)
+        {
+            cout << "You Won!" << endl;
         }
     }
     else
@@ -237,7 +287,7 @@ void ServerProcessPackets()
     while (1)
     {
         ENetEvent event;
-        while (enet_host_service(NetHost, &event, 1000) > 0)
+        while (enet_host_service(NetHost, &event, 100000) > 0)
         {
             switch (event.type)
             {
@@ -295,7 +345,7 @@ void ClientProcessPackets()
     {
         ENetEvent event;
         /* Wait up to 1000 milliseconds for an event. */
-        while (enet_host_service(NetHost, &event, 10000) > 0)
+        while (enet_host_service(NetHost, &event, 100000) > 0)
         {
             switch (event.type)
             {
@@ -384,12 +434,3 @@ int main(int argc, char** argv)
     return EXIT_SUCCESS;
 }
 
-void Draw()
-{
-
-}
-
-void Test()
-{
-
-}
